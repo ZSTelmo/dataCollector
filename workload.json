@@ -1,0 +1,6 @@
+{
+  "workers": 4,
+  "targets": [],
+  "output": "results.csv",
+  "filter_pattern": "*.log"
+}

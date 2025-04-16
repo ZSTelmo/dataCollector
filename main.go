@@ -3,7 +3,9 @@ package main
 import (
 	"datacollector/csv"
 	"datacollector/mysql"
+	"encoding/json"
 	"flag"
+	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -13,19 +15,60 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// Workload represents the configuration loaded from workload.json
+type Workload struct {
+	Workers       int      `json:"workers"`
+	Targets       []string `json:"targets"`
+	Output        string   `json:"output"`
+	FilterPattern string   `json:"filter_pattern"`
+}
+
+func loadWorkloadConfig(filePath string) (*Workload, error) {
+	// Read the workload.json file
+	data, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse the JSON into the Workload struct
+	var workload Workload
+	if err := json.Unmarshal(data, &workload); err != nil {
+		return nil, err
+	}
+
+	return &workload, nil
+}
+
 func main() {
+	// Define and parse command-line flags
+	// MySQL connection details come from .env file
+	query := flag.String("query", "", "SQL query to execute")
+	outputDir := flag.String("outdir", "./output", "Directory for output CSV files")
+	outputFile := flag.String("outfile", "query_results", "Output CSV filename")
+	workloadFile := flag.String("workload", "workload.json", "Path to workload configuration file")
+
+	flag.Parse()
+
+	// Load workload configuration
+	workload, err := loadWorkloadConfig(*workloadFile)
+	if err != nil {
+		log.Printf("Warning: Failed to load workload file %s: %v", *workloadFile, err)
+		// Initialize with default values if file cannot be loaded
+		workload = &Workload{
+			Workers:       1,
+			Targets:       []string{},
+			Output:        "results.csv",
+			FilterPattern: "*.log",
+		}
+	}
+
+	log.Printf("Loaded workload configuration from %s: Workers=%d, Targets=%v, Output=%s, FilterPattern=%s",
+		*workloadFile, workload.Workers, workload.Targets, workload.Output, workload.FilterPattern)
+
 	// Load environment variables from .env file
 	if err := godotenv.Load(); err != nil {
 		log.Printf("Warning: .env file not found or could not be loaded: %v", err)
 	}
-
-	// Define and parse command-line flags
-	// MySQL connection details now come from .env file
-	query := flag.String("query", "", "SQL query to execute")
-	outputDir := flag.String("outdir", "./output", "Directory for output CSV files")
-	outputFile := flag.String("outfile", "query_results", "Output CSV filename")
-
-	flag.Parse()
 
 	// Get database configuration from environment variables
 	dbHost := os.Getenv("DB_HOST")
