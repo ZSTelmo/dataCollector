@@ -2,7 +2,7 @@ package main
 
 import (
 	"datacollector/csv"
-	"datacollector/mysql"
+	"datacollector/database"
 	"encoding/json"
 	"flag"
 	"io/ioutil"
@@ -21,6 +21,9 @@ type Workload struct {
 	Targets       []string `json:"targets"`
 	Output        string   `json:"output"`
 	FilterPattern string   `json:"filter_pattern"`
+	Query         string   `json:"query"`   // SQL query to execute
+	OutputDir     string   `json:"outdir"`  // Optional output directory
+	OutputFile    string   `json:"outfile"` // Optional output file name
 }
 
 func loadWorkloadConfig(filePath string) (*Workload, error) {
@@ -40,13 +43,8 @@ func loadWorkloadConfig(filePath string) (*Workload, error) {
 }
 
 func main() {
-	// Define and parse command-line flags
-	// MySQL connection details come from .env file
-	query := flag.String("query", "", "SQL query to execute")
-	outputDir := flag.String("outdir", "./output", "Directory for output CSV files")
-	outputFile := flag.String("outfile", "query_results", "Output CSV filename")
+	// Only accept workload file as command-line argument
 	workloadFile := flag.String("workload", "workload.json", "Path to workload configuration file")
-
 	flag.Parse()
 
 	// Load workload configuration
@@ -59,11 +57,13 @@ func main() {
 			Targets:       []string{},
 			Output:        "results.csv",
 			FilterPattern: "*.log",
+			OutputDir:     "./output",
+			OutputFile:    "query_results",
 		}
 	}
 
-	log.Printf("Loaded workload configuration from %s: Workers=%d, Targets=%v, Output=%s, FilterPattern=%s",
-		*workloadFile, workload.Workers, workload.Targets, workload.Output, workload.FilterPattern)
+	log.Printf("Loaded workload configuration from %s: Workers=%d, Targets=%v, Output=%s, FilterPattern=%s, Query=%s",
+		*workloadFile, workload.Workers, workload.Targets, workload.Output, workload.FilterPattern, workload.Query)
 
 	// Load environment variables from .env file
 	if err := godotenv.Load(); err != nil {
@@ -71,14 +71,21 @@ func main() {
 	}
 
 	// Get database configuration from environment variables
+	dbType := os.Getenv("DB_TYPE")
+	if dbType == "" {
+		dbType = "mysql" // Default to MySQL for backward compatibility
+	}
+
 	dbHost := os.Getenv("DB_HOST")
 	if dbHost == "" {
 		dbHost = "localhost" // Default value
 	}
 
 	dbPortStr := os.Getenv("DB_PORT")
-	dbPort := 3306 // Default value
-	if dbPortStr != "" {
+	dbPort := 3306 // Default value for MySQL
+	if dbType == "postgres" && dbPortStr == "" {
+		dbPort = 5432 // Default value for PostgreSQL
+	} else if dbPortStr != "" {
 		port, err := strconv.Atoi(dbPortStr)
 		if err == nil {
 			dbPort = port
@@ -94,50 +101,60 @@ func main() {
 
 	dbPass := os.Getenv("DB_PASSWORD")
 	dbName := os.Getenv("DB_NAME")
+	dbSSLMode := os.Getenv("DB_SSL_MODE")
 
 	// Check required parameters
 	if dbName == "" {
 		log.Fatal("Database name is required. Set DB_NAME in .env file.")
 	}
 
-	if *query == "" {
-		log.Fatal("SQL query is required. Use -query flag.")
+	if workload.Query == "" {
+		log.Fatal("SQL query is required in workload configuration.")
 	}
 
 	// Configure database connection
-	dbConfig := mysql.DBConfig{
+	dbConfig := database.Config{
+		Type:     dbType,
 		Host:     dbHost,
 		Port:     dbPort,
 		User:     dbUser,
 		Password: dbPass,
 		Database: dbName,
+		SSLMode:  dbSSLMode,
 	}
 
 	// Log start time
 	startTime := time.Now()
 	log.Printf("Starting data collection at %s", startTime.Format(time.RFC3339))
-	log.Printf("Connecting to MySQL database %s on %s:%d", dbName, dbHost, dbPort)
+	log.Printf("Connecting to %s database %s on %s:%d", dbType, dbName, dbHost, dbPort)
 
 	// Connect to database
-	db, err := mysql.Connect(dbConfig)
+	db, err := database.Connect(dbConfig)
 	if err != nil {
 		log.Fatalf("Failed to connect to the database: %v", err)
 	}
-	defer mysql.Close(db)
 
 	// Execute query
-	log.Printf("Executing query: %s", *query)
-	result, err := mysql.ExecuteQuery(db, *query)
+	log.Printf("Executing query: %s", workload.Query)
+	result, err := database.ExecuteRawQuery(db, workload.Query)
 	if err != nil {
 		log.Fatalf("Query execution failed: %v", err)
+	}
+
+	// Close database connection when done
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Printf("Warning: Error accessing SQL DB for closing: %v", err)
+	} else {
+		defer sqlDB.Close()
 	}
 
 	log.Printf("Query executed successfully. Retrieved %d rows.", len(result.Rows))
 
 	// Configure CSV output
 	csvOptions := csv.WriteOptions{
-		Directory:  *outputDir,
-		Filename:   *outputFile,
+		Directory:  workload.OutputDir,
+		Filename:   workload.OutputFile,
 		AppendDate: true,
 	}
 

@@ -1,14 +1,14 @@
 # Data Collector
 
-A Go application that collects data from MySQL databases and exports it to CSV files for further analysis.
+A Go application that collects data from MySQL and PostgreSQL databases and exports it to CSV files for further analysis.
 
 ## Overview
 
-This tool executes SQL queries against MySQL databases and writes the results to CSV files with customizable options. It supports configuration through both command-line arguments and a workload configuration file.
+This tool executes SQL queries against databases (supporting both MySQL and PostgreSQL) and writes the results to CSV files with customizable options. It supports configuration through both command-line arguments and a workload configuration file.
 
 ## Features
 
-- Connect to MySQL databases using configurable connection parameters
+- Connect to MySQL or PostgreSQL databases using configurable connection parameters
 - Execute custom SQL queries
 - Export query results to CSV files
 - Customize output directory and filenames
@@ -19,10 +19,12 @@ This tool executes SQL queries against MySQL databases and writes the results to
 ## Requirements
 
 - Go 1.16 or higher
-- MySQL database server
+- MySQL or PostgreSQL database server
 - Required Go packages:
   - github.com/joho/godotenv
-  - github.com/go-sql-driver/mysql
+  - gorm.io/gorm
+  - gorm.io/driver/mysql
+  - gorm.io/driver/postgres
 
 ## Installation
 
@@ -44,11 +46,13 @@ This tool executes SQL queries against MySQL databases and writes the results to
 Create a `.env` file in the project root with the following variables:
 
 ```
+DB_TYPE=mysql           # Options: 'mysql' or 'postgres'
 DB_HOST=localhost
-DB_PORT=3306
+DB_PORT=3306            # Default: 3306 for MySQL, 5432 for PostgreSQL
 DB_USER=root
 DB_PASSWORD=yourpassword
 DB_NAME=yourdatabase
+DB_SSL_MODE=disable     # For PostgreSQL: disable, require, verify-ca, verify-full
 ```
 
 ### Workload Configuration
@@ -99,17 +103,38 @@ The application produces CSV files with:
 
 ## Example
 
-1. Set up your database connection in `.env` file
-2. Run a query:
+1. Set up your database connection in `.env` file (MySQL example):
+   ```
+   DB_TYPE=mysql
+   DB_HOST=localhost
+   DB_PORT=3306
+   DB_USER=root
+   DB_PASSWORD=yourpassword
+   DB_NAME=yourdatabase
+   ```
+
+2. Or for PostgreSQL:
+   ```
+   DB_TYPE=postgres
+   DB_HOST=localhost
+   DB_PORT=5432
+   DB_USER=postgres
+   DB_PASSWORD=yourpassword
+   DB_NAME=yourdatabase
+   DB_SSL_MODE=disable
+   ```
+
+3. Run a query:
    ```
    go run main.go -query "SELECT id, name, email FROM customers WHERE created_at > '2025-01-01'"
    ```
-3. Check the output directory for your CSV file with the query results
+   
+4. Check the output directory for your CSV file with the query results
 
 ## Project Structure
 
 - `main.go`: Main application logic and command parsing
-- `mysql/mysql.go`: MySQL database connection and query execution
+- `database/db.go`: Database connection and query execution with ORM support
 - `csv/csv.go`: CSV file writing and manipulation
 - `workload.json`: Default workload configuration
 

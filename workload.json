@@ -2,5 +2,8 @@
   "workers": 4,
   "targets": [],
   "output": "results.csv",
-  "filter_pattern": "*.log"
+  "filter_pattern": "*.log",
+  "query": "SELECT * FROM users LIMIT 100",
+  "outdir": "./output",
+  "outfile": "query_results"
 }
