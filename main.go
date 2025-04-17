@@ -3,9 +3,8 @@ package main
 import (
 	"datacollector/csv"
 	"datacollector/database"
-	"encoding/json"
+	"datacollector/models"
 	"flag"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -15,44 +14,17 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// Workload represents the configuration loaded from workload.json
-type Workload struct {
-	Workers       int      `json:"workers"`
-	Targets       []string `json:"targets"`
-	Output        string   `json:"output"`
-	FilterPattern string   `json:"filter_pattern"`
-	Query         string   `json:"query"`   // SQL query to execute
-	OutputDir     string   `json:"outdir"`  // Optional output directory
-	OutputFile    string   `json:"outfile"` // Optional output file name
-}
-
-func loadWorkloadConfig(filePath string) (*Workload, error) {
-	// Read the workload.json file
-	data, err := ioutil.ReadFile(filePath)
-	if err != nil {
-		return nil, err
-	}
-
-	// Parse the JSON into the Workload struct
-	var workload Workload
-	if err := json.Unmarshal(data, &workload); err != nil {
-		return nil, err
-	}
-
-	return &workload, nil
-}
-
 func main() {
 	// Only accept workload file as command-line argument
 	workloadFile := flag.String("workload", "workload.json", "Path to workload configuration file")
 	flag.Parse()
 
 	// Load workload configuration
-	workload, err := loadWorkloadConfig(*workloadFile)
+	workload, err := models.LoadWorkloadConfig(*workloadFile)
 	if err != nil {
 		log.Printf("Warning: Failed to load workload file %s: %v", *workloadFile, err)
 		// Initialize with default values if file cannot be loaded
-		workload = &Workload{
+		workload = &models.Workload{
 			Workers:       1,
 			Targets:       []string{},
 			Output:        "results.csv",
