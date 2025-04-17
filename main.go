@@ -5,10 +5,12 @@ import (
 	"datacollector/database"
 	"datacollector/models"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -32,6 +34,12 @@ func main() {
 			OutputDir:     "./output",
 			OutputFile:    "query_results",
 		}
+	} else {
+		// Ensure Workers is at least 1
+		if workload.Workers <= 0 {
+			log.Printf("Warning: Invalid number of workers (%d) specified in workload.json. Defaulting to 1.", workload.Workers)
+			workload.Workers = 1
+		}
 	}
 
 	log.Printf("Loaded workload configuration from %s: Workers=%d, Targets=%v, Output=%s, FilterPattern=%s, Query=%s",
@@ -50,7 +58,14 @@ func main() {
 
 	dbHost := os.Getenv("DB_HOST")
 	if dbHost == "" {
-		dbHost = "localhost" // Default value
+		// Use the first target from workload.json if available, otherwise default to localhost
+		if len(workload.Targets) > 0 {
+			dbHost = workload.Targets[0]
+			log.Printf("DB_HOST not specified in .env, using first target from workload.json: %s", dbHost)
+		} else {
+			dbHost = "localhost" // Default value
+			log.Printf("DB_HOST not specified in .env and no targets in workload.json, using default: %s", dbHost)
+		}
 	}
 
 	dbPortStr := os.Getenv("DB_PORT")
@@ -79,49 +94,107 @@ func main() {
 	if dbName == "" {
 		log.Fatal("Database name is required. Set DB_NAME in .env file.")
 	}
-
 	if workload.Query == "" {
 		log.Fatal("SQL query is required in workload configuration.")
 	}
-
-	// Configure database connection
-	dbConfig := database.Config{
-		Type:     dbType,
-		Host:     dbHost,
-		Port:     dbPort,
-		User:     dbUser,
-		Password: dbPass,
-		Database: dbName,
-		SSLMode:  dbSSLMode,
+	if len(workload.Targets) == 0 {
+		log.Fatal("At least one target host is required in workload configuration.")
 	}
 
 	// Log start time
 	startTime := time.Now()
-	log.Printf("Starting data collection at %s", startTime.Format(time.RFC3339))
-	log.Printf("Connecting to %s database %s on %s:%d", dbType, dbName, dbHost, dbPort)
+	log.Printf("Starting data collection at %s for targets: %v", startTime.Format(time.RFC3339), workload.Targets)
 
-	// Connect to database
-	db, err := database.Connect(dbConfig)
-	if err != nil {
-		log.Fatalf("Failed to connect to the database: %v", err)
+	// --- Parallel Execution Logic ---
+	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, workload.Workers) // Limit concurrency
+	resultsChan := make(chan *database.QueryResult, len(workload.Targets))
+	errChan := make(chan error, len(workload.Targets))
+
+	for _, targetHost := range workload.Targets {
+		wg.Add(1)
+		semaphore <- struct{}{} // Acquire semaphore slot
+
+		go func(host string) {
+			defer wg.Done()
+			defer func() { <-semaphore }() // Release semaphore slot
+
+			log.Printf("Worker starting for target: %s", host)
+
+			// Configure database connection for this specific target
+			targetDbConfig := database.Config{
+				Type:     dbType,
+				Host:     host, // Use the target host from the loop
+				Port:     dbPort,
+				User:     dbUser,
+				Password: dbPass,
+				Database: dbName,
+				SSLMode:  dbSSLMode,
+			}
+
+			// Connect to database
+			db, err := database.Connect(targetDbConfig)
+			if err != nil {
+				errChan <- fmt.Errorf("failed to connect to database %s on %s: %w", dbName, host, err)
+				return
+			}
+			defer database.Close(db) // Ensure connection is closed
+
+			// Execute query
+			log.Printf("Executing query on %s: %s", host, workload.Query)
+			result, err := database.ExecuteRawQuery(db, workload.Query)
+			if err != nil {
+				errChan <- fmt.Errorf("query execution failed on %s: %w", host, err)
+				return
+			}
+
+			log.Printf("Query executed successfully on %s. Retrieved %d rows.", host, len(result.Rows))
+			resultsChan <- result // Send successful result
+
+		}(targetHost) // Pass targetHost to the goroutine
 	}
 
-	// Execute query
-	log.Printf("Executing query: %s", workload.Query)
-	result, err := database.ExecuteRawQuery(db, workload.Query)
-	if err != nil {
-		log.Fatalf("Query execution failed: %v", err)
+	// Wait for all goroutines to finish
+	wg.Wait()
+	close(resultsChan)
+	close(errChan)
+
+	// --- Aggregation and Output ---
+	var allRows [][]string
+	var columns []string
+	hasResults := false
+
+	// Collect results
+	for result := range resultsChan {
+		if result != nil {
+			if !hasResults && len(result.Columns) > 0 {
+				columns = result.Columns // Get columns from the first result
+				hasResults = true
+			}
+			if len(result.Rows) > 0 {
+				allRows = append(allRows, result.Rows...)
+			}
+		}
 	}
 
-	// Close database connection when done
-	sqlDB, err := db.DB()
-	if err != nil {
-		log.Printf("Warning: Error accessing SQL DB for closing: %v", err)
-	} else {
-		defer sqlDB.Close()
+	// Collect and log errors
+	errorCount := 0
+	for err := range errChan {
+		log.Printf("Error during processing: %v", err)
+		errorCount++
 	}
 
-	log.Printf("Query executed successfully. Retrieved %d rows.", len(result.Rows))
+	if errorCount > 0 {
+		log.Printf("Warning: Encountered %d error(s) during parallel execution.", errorCount)
+	}
+
+	if !hasResults && errorCount == len(workload.Targets) {
+		log.Fatal("All target queries failed. No data to write.")
+	}
+	if !hasResults && errorCount < len(workload.Targets) {
+		log.Printf("Warning: No data rows retrieved from any successful target.")
+		// Proceed to write empty file with headers if columns were found, or just log completion
+	}
 
 	// Configure CSV output
 	csvOptions := csv.WriteOptions{
@@ -130,17 +203,21 @@ func main() {
 		AppendDate: true,
 	}
 
-	// Write results to CSV
-	outputPath, err := csv.WriteToCSV(result.Rows, result.Columns, csvOptions)
-	if err != nil {
-		log.Fatalf("Failed to write data to CSV: %v", err)
+	// Write aggregated results to CSV
+	if len(allRows) > 0 || hasResults { // Write even if only headers are available
+		log.Printf("Aggregated %d rows from %d targets (out of %d). Writing to CSV...", len(allRows), len(workload.Targets)-errorCount, len(workload.Targets))
+		outputPath, err := csv.WriteToCSV(allRows, columns, csvOptions)
+		if err != nil {
+			log.Fatalf("Failed to write aggregated data to CSV: %v", err)
+		}
+		// Log success
+		absPath, _ := filepath.Abs(outputPath)
+		log.Printf("Aggregated data successfully written to CSV file: %s", absPath)
+	} else {
+		log.Printf("No data rows to write to CSV.")
 	}
 
 	// Calculate elapsed time
 	elapsedTime := time.Since(startTime)
-
-	// Log success
-	absPath, _ := filepath.Abs(outputPath)
-	log.Printf("Data successfully written to CSV file: %s", absPath)
 	log.Printf("Process completed in %v", elapsedTime)
 }

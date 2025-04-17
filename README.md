@@ -1,20 +1,20 @@
 # Data Collector
 
-A Go application that collects data from MySQL and PostgreSQL databases and exports it to CSV files for further analysis.
+A Go application that collects data by executing SQL queries against multiple MySQL or PostgreSQL databases in parallel and aggregates the results into a single CSV file.
 
 ## Overview
 
-This tool executes SQL queries against databases (supporting both MySQL and PostgreSQL) and writes the results to CSV files with customizable options. It supports configuration through both command-line arguments and a workload configuration file.
+This tool executes a specified SQL query against a list of target databases (supporting both MySQL and PostgreSQL) concurrently. It aggregates the results from all successful queries and writes them to a single CSV file with customizable options. Configuration is primarily managed through a `workload.json` file and environment variables (`.env`).
 
 ## Features
 
-- Connect to MySQL or PostgreSQL databases using configurable connection parameters
-- Execute custom SQL queries
-- Export query results to CSV files
+- Connect to multiple MySQL or PostgreSQL databases
+- Execute a custom SQL query concurrently across specified target databases
+- Aggregate results from multiple databases into a single CSV file
+- Limit concurrency using a configurable number of workers
 - Customize output directory and filenames
 - Automatically append timestamps to filenames
-- Configure multiple parameters through a workload.json file
-- Environment variable support through .env files
+- Configure database connections and execution parameters through `workload.json` and `.env` files
 
 ## Requirements
 
@@ -41,110 +41,118 @@ This tool executes SQL queries against databases (supporting both MySQL and Post
 
 ## Configuration
 
+Configuration is managed through environment variables (`.env` file) and a workload configuration file (`workload.json`).
+
 ### Environment Variables
 
-Create a `.env` file in the project root with the following variables:
+Create a `.env` file in the project root with the following variables for database connection details. These settings apply to all target databases unless overridden by specific target configurations (if implemented in the future).
 
 ```
 DB_TYPE=mysql           # Options: 'mysql' or 'postgres'
-DB_HOST=localhost
+DB_HOST=fallback_host   # Fallback host if 'targets' in workload.json is empty (optional)
 DB_PORT=3306            # Default: 3306 for MySQL, 5432 for PostgreSQL
 DB_USER=root
 DB_PASSWORD=yourpassword
-DB_NAME=yourdatabase
+DB_NAME=yourdatabase    # Database name (required)
 DB_SSL_MODE=disable     # For PostgreSQL: disable, require, verify-ca, verify-full
 ```
+**Note:** The primary list of database hosts to query is defined in `workload.json`. `DB_HOST` in `.env` is only used as a fallback if the `targets` list in `workload.json` is empty.
 
 ### Workload Configuration
 
-You can customize the execution using a `workload.json` file:
+Customize the execution behavior using a `workload.json` file (or specify a different file using the `-workload` flag).
 
 ```json
 {
   "workers": 4,
-  "targets": [],
-  "output": "results.csv",
-  "filter_pattern": "*.log"
+  "targets": ["db1.example.com", "db2.example.com", "192.168.1.100"],
+  "query": "SELECT id, name, status FROM tasks WHERE status = 'pending'",
+  "output_dir": "./output",
+  "output_file": "query_results",
+  "filter_pattern": "*.log" // Note: filter_pattern seems unused in the current main.go logic
 }
 ```
 
-- `workers`: Number of concurrent workers (integer)
-- `targets`: List of target sources (array of strings)
-- `output`: Default output filename (string)
-- `filter_pattern`: File pattern for filtering (string)
+- `workers`: (Integer) Maximum number of concurrent database query executions. Defaults to 1 if not specified or invalid.
+- `targets`: (Array of strings, Required) List of database hostnames or IP addresses to query. At least one target is required.
+- `query`: (String, Required) The SQL query to execute on each target database.
+- `output_dir`: (String) Directory where the output CSV file will be saved (default: "./output").
+- `output_file`: (String) Base filename for the output CSV file (default: "query_results"). A timestamp will be appended.
+- `filter_pattern`: (String) Currently unused in the main data collection logic.
 
 ## Usage
 
-Basic usage:
+Run the application from the command line. Configuration is primarily done via `.env` and `workload.json`.
 
-```
-go run main.go -query "SELECT * FROM your_table"
+```bash
+go run main.go
 ```
 
-With additional options:
+To use a specific workload file:
 
-```
-go run main.go -query "SELECT * FROM your_table" -outdir "./data" -outfile "export" -workload "custom-workload.json"
+```bash
+go run main.go -workload "path/to/your/custom-workload.json"
 ```
 
 ### Command-line Arguments
 
-- `-query`: SQL query to execute (required)
-- `-outdir`: Directory for output CSV files (default: "./output")
-- `-outfile`: Output CSV filename without extension (default: "query_results")
-- `-workload`: Path to workload configuration file (default: "workload.json")
+- `-workload`: Path to the workload configuration JSON file (default: "workload.json").
 
 ## Output
 
-The application produces CSV files with:
-- One row for column headers
-- Result data from the SQL query
-- Timestamps in filenames by default (e.g., `query_results_2025-04-16_120000.csv`)
+The application produces a single CSV file in the specified `output_dir`.
+- The filename is based on `output_file` with an appended timestamp (e.g., `query_results_2025-04-17_103000.csv`).
+- The file contains aggregated results from all target databases where the query executed successfully.
+- The first row contains the column headers from the query.
+- Subsequent rows contain the data retrieved from the databases.
 
 ## Example
 
-1. Set up your database connection in `.env` file (MySQL example):
-   ```
-   DB_TYPE=mysql
-   DB_HOST=localhost
-   DB_PORT=3306
-   DB_USER=root
-   DB_PASSWORD=yourpassword
-   DB_NAME=yourdatabase
-   ```
+1.  **Configure `.env`:**
+    Set up your default database connection details (user, password, db name, type). `DB_HOST` is optional if `targets` is set in `workload.json`.
+    ```
+    DB_TYPE=mysql
+    DB_USER=app_user
+    DB_PASSWORD=secret
+    DB_NAME=inventory
+    ```
 
-2. Or for PostgreSQL:
-   ```
-   DB_TYPE=postgres
-   DB_HOST=localhost
-   DB_PORT=5432
-   DB_USER=postgres
-   DB_PASSWORD=yourpassword
-   DB_NAME=yourdatabase
-   DB_SSL_MODE=disable
-   ```
+2.  **Configure `workload.json`:**
+    Define the target databases, the query, and worker count.
+    ```json
+    {
+      "workers": 5,
+      "targets": ["prod-db-1.region1.local", "prod-db-2.region1.local", "prod-db-1.region2.local"],
+      "query": "SELECT hostname, cpu_usage, memory_usage FROM server_metrics WHERE cpu_usage > 90.0",
+      "output_dir": "./results/high_cpu",
+      "output_file": "high_cpu_servers"
+    }
+    ```
 
-3. Run a query:
-   ```
-   go run main.go -query "SELECT id, name, email FROM customers WHERE created_at > '2025-01-01'"
-   ```
-   
-4. Check the output directory for your CSV file with the query results
+3.  **Run the application:**
+    ```bash
+    go run main.go
+    ```
+
+4.  **Check the output:**
+    Look for a CSV file like `results/high_cpu/high_cpu_servers_YYYY-MM-DD_HHMMSS.csv` containing aggregated data from the specified targets.
 
 ## Project Structure
 
-- `main.go`: Main application logic and command parsing
+- `main.go`: Main application logic, configuration loading, parallel execution orchestration.
 - `database/db.go`: Database connection and query execution with ORM support
 - `csv/csv.go`: CSV file writing and manipulation
 - `workload.json`: Default workload configuration
 
 ## Error Handling
 
-The application provides detailed error messages and warnings:
-- Database connection issues
-- Query execution failures 
-- File and directory access problems
-- Configuration loading errors
+The application provides detailed logging for:
+- Configuration loading issues (`.env`, `workload.json`)
+- Database connection failures (per target)
+- Query execution failures (per target)
+- CSV file writing problems
+
+Errors encountered during connection or query execution for individual targets are logged, but the application attempts to continue processing other targets. It will only exit fatally if essential configuration is missing or if *all* target queries fail. A summary of errors encountered is logged at the end of the process.
 
 ## License
 

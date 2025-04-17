@@ -1,9 +1,9 @@
 {
   "workers": 4,
-  "targets": [],
+  "targets": ["webdevel.zonesoft.tech"],
   "output": "results.csv",
   "filter_pattern": "*.log",
-  "query": "SELECT * FROM users LIMIT 100",
+  "query": "SELECT * FROM users LIMIT 10",
   "outdir": "./output",
   "outfile": "query_results"
 }
