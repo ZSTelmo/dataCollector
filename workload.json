@@ -2,8 +2,8 @@
   "workers": 4,
   "targets": ["webdevel.zonesoft.tech"],
   "output": "results.csv",
-  "filter_pattern": "*.log",
-  "query": "SELECT * FROM users LIMIT 10",
+  "filter_pattern": "mysql",
+  "query": "SELECT Host,User FROM user LIMIT 10",
   "outdir": "./output",
   "outfile": "query_results"
 }

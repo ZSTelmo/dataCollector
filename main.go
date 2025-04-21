@@ -89,9 +89,15 @@ func main() {
 	dbName := os.Getenv("DB_NAME")
 	dbSSLMode := os.Getenv("DB_SSL_MODE")
 
+	// If DB_NAME is not set, use filter_pattern from workload.json
+	if dbName == "" {
+		dbName = workload.FilterPattern
+		log.Printf("DB_NAME not specified in .env, using filter_pattern from workload.json: %s", dbName)
+	}
+
 	// Check required parameters
 	if dbName == "" {
-		log.Fatal("Database name is required. Set DB_NAME in .env file.")
+		log.Fatal("Database name is required. Set DB_NAME in .env file or provide filter_pattern in workload.json.")
 	}
 	if workload.Query == "" {
 		log.Fatal("SQL query is required in workload configuration.")
@@ -136,7 +142,7 @@ func main() {
 	}
 
 	// Configure CSV output
-	csvOptions := csv.WriteOptions{
+	csvOptions := models.WriteOptions{
 		Directory:  workload.OutputDir,
 		Filename:   workload.OutputFile,
 		AppendDate: true,
@@ -144,7 +150,7 @@ func main() {
 
 	// Write aggregated results to CSV
 	if len(result.Rows) > 0 || result.HasResults { // Write even if only headers are available
-		log.Printf("Aggregated %d rows from %d targets (out of %d). Writing to CSV...", 
+		log.Printf("Aggregated %d rows from %d targets (out of %d). Writing to CSV...",
 			len(result.Rows), len(workload.Targets)-result.ErrorCount, len(workload.Targets))
 		outputPath, err := csv.WriteToCSV(result.Rows, result.Columns, csvOptions)
 		if err != nil {

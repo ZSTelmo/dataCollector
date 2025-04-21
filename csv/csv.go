@@ -3,20 +3,29 @@ package csv
 import (
 	"encoding/csv"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"time"
+
+	"datacollector/models"
 )
 
-// WriteOptions contains configuration for CSV writing
-type WriteOptions struct {
-	Directory  string
-	Filename   string
-	AppendDate bool
+// generateRandomString returns a random string of the specified length
+func generateRandomString(length int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	result := make([]byte, length)
+	for i := range result {
+		result[i] = charset[rand.Intn(len(charset))]
+	}
+	return string(result)
 }
 
 // WriteToCSV writes the given data to a CSV file
-func WriteToCSV(data [][]string, headers []string, options WriteOptions) (string, error) {
+func WriteToCSV(data [][]string, headers []string, options models.WriteOptions) (string, error) {
+	// Initialize random seed
+	rand.Seed(time.Now().UnixNano())
+
 	// Create directory if it doesn't exist
 	if options.Directory != "" {
 		if err := os.MkdirAll(options.Directory, 0755); err != nil {
@@ -27,11 +36,12 @@ func WriteToCSV(data [][]string, headers []string, options WriteOptions) (string
 	// Generate filename
 	filename := options.Filename
 	if options.AppendDate {
-		// Add timestamp to filename to make it unique
+		// Add timestamp and 4 random chars to filename to make it unique
 		timestamp := time.Now().Format("2006-01-02_150405")
+		randomChars := generateRandomString(4)
 		ext := filepath.Ext(filename)
 		basename := filename[:len(filename)-len(ext)]
-		filename = fmt.Sprintf("%s_%s%s", basename, timestamp, ext)
+		filename = fmt.Sprintf("%s_%s_%s%s", basename, timestamp, randomChars, ext)
 	}
 
 	// Ensure .csv extension

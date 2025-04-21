@@ -30,7 +30,7 @@ This tool executes a specified SQL query against a list of target databases (sup
 
 1. Clone the repository:
    ```
-   git clone <repository-url>
+   git clone https://github.com/zstelmo/dataCollector.git
    cd dataCollector
    ```
 
@@ -69,7 +69,7 @@ Customize the execution behavior using a `workload.json` file (or specify a diff
   "query": "SELECT id, name, status FROM tasks WHERE status = 'pending'",
   "output_dir": "./output",
   "output_file": "query_results",
-  "filter_pattern": "*.log" // Note: filter_pattern seems unused in the current main.go logic
+  "filter_pattern": "some_data_base_name // Note: filter_pattern seems unused in the current main.go logic
 }
 ```
 
